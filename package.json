@@ -53,7 +53,6 @@
         "dev:abi": "npx hardhat clear-abi && npx hardhat export-abi",
         "dev:docs": "npx shx rm -rf docs && npx hardhat docgen",
         "deploy:all": "ENABLED_OPTIMIZER=true npx hardhat run scripts/deployment/deploy.ts",
-        "deploy:positive-even-setter": "ENABLED_OPTIMIZER=true npx hardhat run scripts/deployment/separately/PositiveEvenSetter.ts",
         "clean": "npx shx rm -rf artifacts cache coverage coverage.json && npx shx echo Cleaned",
         "clean-oz": "npx shx rm -rf .openzeppelin && npx shx echo Cleaned",
         "dev:slither": "npm run clean && slither .",
