@@ -86,23 +86,73 @@ describe("DepositBox", function () {
             ]);
         });
 
-        it("Sigh and withdraw", async () => {
+        it("Sigh and withdraw Token/NFT/Native", async () => {
+            // ERC20
             await erc20.mint(owner.address, parseEther("100"));
             await erc20.approve(depositBox.address, parseEther("100"));
 
-            await depositBox.createDepositBox(erc20.address, parseEther("50"), 0, 100);
+            await depositBox.createDepositBox(erc20.address, parseEther("50"), 0, 0);
 
-            const sighDeadline = (await time.latest()) + 1000;
+            expect(await erc20.balanceOf(owner.address)).to.equal(parseEther("50"));
+            expect(await erc20.balanceOf(depositBox.address)).to.equal(parseEther("50"));
 
+            const signDeadline = (await time.latest()) + 1000;
+
+            // create message
             let message = ethers.utils.solidityPack(
                 ["address", "uint256", "uint256"],
-                [owner.address, "0", sighDeadline]
+                [owner.address, "0", signDeadline]
             );
-            const hash = ethers.utils.solidityKeccak256(["bytes"], [message]);
-            const signedMessage = await owner.signMessage(hash);
-            console.log(owner.address);
-            console.log(await depositBox.withdrawView(0, sighDeadline, signedMessage));
-            // await depositBox.withdrawFromBox(0, sighDeadline, signedMessage);
+
+            // hash message
+            let hash = ethers.utils.solidityKeccak256(["bytes"], [message]);
+
+            // sign message
+            let signedMessage = await owner.signMessage(ethers.utils.arrayify(hash));
+
+            // withdraw tokens
+            await depositBox.withdrawFromBox(0, signDeadline, signedMessage);
+            expect(await erc20.balanceOf(owner.address)).to.equal(parseEther("100"));
+            expect(await erc20.balanceOf(depositBox.address)).to.equal(0);
+
+            // ERC721
+            await erc721.safeMint(owner.address);
+            await erc721.approve(depositBox.address, 0);
+
+            await depositBox.createDepositBox(erc721.address, 0, 1, 0);
+
+            expect(await erc721.ownerOf(0)).to.equal(depositBox.address);
+
+            // create message
+            message = ethers.utils.solidityPack(["address", "uint256", "uint256"], [owner.address, "1", signDeadline]);
+
+            // hash message
+            hash = ethers.utils.solidityKeccak256(["bytes"], [message]);
+
+            // sign message
+            signedMessage = await owner.signMessage(ethers.utils.arrayify(hash));
+
+            // withdraw tokens
+            await depositBox.withdrawFromBox(1, signDeadline, signedMessage);
+            expect(await erc721.ownerOf(0)).to.equal(owner.address);
+
+            // Native token
+            await depositBox.createDepositBox(AddressZero, parseEther("1"), 2, 0, { value: parseEther("1") });
+
+            expect(await ethers.provider.getBalance(depositBox.address)).to.equal(parseEther("1"));
+
+            // create message
+            message = ethers.utils.solidityPack(["address", "uint256", "uint256"], [owner.address, "2", signDeadline]);
+
+            // hash message
+            hash = ethers.utils.solidityKeccak256(["bytes"], [message]);
+
+            // sign message
+            signedMessage = await owner.signMessage(ethers.utils.arrayify(hash));
+
+            // withdraw tokens
+            await depositBox.withdrawFromBox(2, signDeadline, signedMessage);
+            expect(await ethers.provider.getBalance(depositBox.address)).to.equal(0);
         });
     });
 
@@ -135,52 +185,80 @@ describe("DepositBox", function () {
         });
 
         it("When sigh is expired", async () => {
-            const sighDeadline = await time.latest();
+            const signDeadline = await time.latest();
 
             let message = ethers.utils.solidityPack(
                 ["address", "uint256", "uint256"],
-                [owner.address, "0", sighDeadline]
+                [owner.address, "0", signDeadline]
             );
             const hash = ethers.utils.solidityKeccak256(["bytes"], [message]);
             const signedMessage = await owner.signMessage(hash);
 
-            await expect(depositBox.withdrawFromBox(0, sighDeadline, signedMessage)).to.be.revertedWithCustomError(
+            await expect(depositBox.withdrawFromBox(0, signDeadline, signedMessage)).to.be.revertedWithCustomError(
                 depositBox,
-                "SighExpired"
+                "SignExpired"
             );
         });
 
         it("When signed is not box owner", async () => {
-            const sighDeadline = (await time.latest()) + 10000;
+            const signDeadline = (await time.latest()) + 10000;
             await depositBox.createDepositBox(AddressZero, parseEther("1"), 2, 0, { value: parseEther("1") });
 
             let message = ethers.utils.solidityPack(
                 ["address", "uint256", "uint256"],
-                [user1.address, "0", sighDeadline]
+                [user1.address, "0", signDeadline]
             );
             const hash = ethers.utils.solidityKeccak256(["bytes"], [message]);
             const signedMessage = await owner.signMessage(hash);
 
-            await expect(depositBox.withdrawFromBox(0, sighDeadline, signedMessage)).to.be.revertedWithCustomError(
+            await expect(depositBox.withdrawFromBox(0, signDeadline, signedMessage)).to.be.revertedWithCustomError(
                 depositBox,
                 "SignerNotOwner"
             );
         });
 
         it("When lock period is not ended", async () => {
-            const sighDeadline = (await time.latest()) + 10000;
+            const signDeadline = (await time.latest()) + 10000;
             await depositBox.createDepositBox(AddressZero, parseEther("1"), 2, 100, { value: parseEther("1") });
 
             let message = ethers.utils.solidityPack(
                 ["address", "uint256", "uint256"],
-                [user1.address, "0", sighDeadline]
+                [user1.address, "0", signDeadline]
             );
             const hash = ethers.utils.solidityKeccak256(["bytes"], [message]);
             const signedMessage = await owner.signMessage(hash);
 
-            await expect(depositBox.withdrawFromBox(0, sighDeadline, signedMessage)).to.be.revertedWithCustomError(
+            await expect(depositBox.withdrawFromBox(0, signDeadline, signedMessage)).to.be.revertedWithCustomError(
                 depositBox,
                 "LockPeriod"
+            );
+        });
+
+        it("When already withdrawn from box", async () => {
+            await depositBox.createDepositBox(AddressZero, parseEther("1"), 2, 0, { value: parseEther("1") });
+
+            expect(await ethers.provider.getBalance(depositBox.address)).to.equal(parseEther("1"));
+
+            const signDeadline = (await time.latest()) + 1000;
+
+            // create message
+            const message = ethers.utils.solidityPack(
+                ["address", "uint256", "uint256"],
+                [owner.address, "0", signDeadline]
+            );
+
+            // hash message
+            const hash = ethers.utils.solidityKeccak256(["bytes"], [message]);
+
+            // sign message
+            const signedMessage = await owner.signMessage(ethers.utils.arrayify(hash));
+
+            // withdraw tokens
+            await depositBox.withdrawFromBox(0, signDeadline, signedMessage);
+
+            await expect(depositBox.withdrawFromBox(0, signDeadline, signedMessage)).to.be.revertedWithCustomError(
+                depositBox,
+                "BoxClosed"
             );
         });
     });

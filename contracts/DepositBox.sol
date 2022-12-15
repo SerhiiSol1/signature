@@ -12,10 +12,11 @@ import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 error ZeroAmount();
 error ZeroAddress();
 error SignerNotOwner();
-error SighExpired();
+error SignExpired();
 error WrongAssetType();
 error WrongValue();
 error LockPeriod();
+error BoxClosed();
 
 contract DepositBox is Ownable {
     using SafeERC20 for IERC20;
@@ -39,6 +40,7 @@ contract DepositBox is Ownable {
     }
 
     mapping(uint256 => Box) public depositBoxes;
+    mapping(address => mapping(uint256 => bool)) public closedBoxes;
 
     event BoxCreated(
         address owner,
@@ -80,10 +82,11 @@ contract DepositBox is Ownable {
         uint256 deadline,
         bytes memory signature
     ) public {
-        if (deadline < block.timestamp) revert SighExpired();
+        if (deadline < block.timestamp) revert SignExpired();
 
         Box storage box = depositBoxes[_boxId];
 
+        if (closedBoxes[box.owner][_boxId] == true) revert BoxClosed();
         if (box.lockPeriod > block.timestamp) revert LockPeriod();
 
         bytes32 message = keccak256(abi.encodePacked(box.owner, _boxId, deadline));
@@ -96,26 +99,13 @@ contract DepositBox is Ownable {
             IERC20(box.assetAddress).safeTransfer(msg.sender, box.amountOrId);
         } else if (box.assetType == AssetType.ERC721) {
             IERC721(box.assetAddress).transferFrom(address(this), msg.sender, box.amountOrId);
-        } else if (box.assetType == AssetType.Native) {
-            payable(msg.sender).transfer(box.amountOrId);
         } else {
-            revert WrongAssetType();
+            payable(msg.sender).transfer(box.amountOrId);
         }
 
+        closedBoxes[box.owner][_boxId] = true;
+
         emit WithdrawFromBox(_boxId, msg.sender);
-    }
-
-    function withdrawView(
-        uint256 _boxId,
-        uint256 deadline,
-        bytes memory signature
-    ) public view returns (address) {
-        Box storage box = depositBoxes[_boxId];
-
-        bytes32 message = keccak256(abi.encodePacked(box.owner, _boxId, deadline));
-
-        bytes32 _hash = hashMessage(message);
-        return ECDSA.recover(_hash, signature);
     }
 
     function hashMessage(bytes32 message) internal pure returns (bytes32) {
