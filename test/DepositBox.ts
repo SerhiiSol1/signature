@@ -154,6 +154,33 @@ describe("DepositBox", function () {
             await depositBox.withdrawFromBox(2, signDeadline, signedMessage);
             expect(await ethers.provider.getBalance(depositBox.address)).to.equal(0);
         });
+
+        it("Withdraw tokens by another user", async () => {
+            // mint erc20 token
+            await erc20.mint(owner.address, parseEther("100"));
+            await erc20.approve(depositBox.address, parseEther("100"));
+
+            // deposit erc20
+            await depositBox.createDepositBox(erc20.address, parseEther("50"), 0, 0);
+
+            const signDeadline = (await time.latest()) + 1000;
+
+            // create message
+            const message = ethers.utils.solidityPack(
+                ["address", "uint256", "uint256"],
+                [owner.address, "0", signDeadline]
+            );
+
+            // hash message
+            const hash = ethers.utils.solidityKeccak256(["bytes"], [message]);
+
+            // sign message
+            const signedMessage = await owner.signMessage(ethers.utils.arrayify(hash));
+
+            // withdraw tokens
+            await depositBox.connect(user1).withdrawFromBox(0, signDeadline, signedMessage);
+            expect(await erc20.balanceOf(user1.address)).to.equal(parseEther("50"));
+        });
     });
 
     describe("Revert", function () {
