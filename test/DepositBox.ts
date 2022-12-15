@@ -48,36 +48,49 @@ describe("DepositBox", function () {
 
     describe("Main functionality", function () {
         it("Deposit Token/NFT/Native", async () => {
-            await depositBox.createDepositBox();
-            expect((await depositBox.depositBoxes(0)).owner).to.equal(owner.address);
-
             // mint erc20 token
             await erc20.mint(owner.address, parseEther("100"));
             await erc20.approve(depositBox.address, parseEther("100"));
 
-            // deposit erc20 and native tokens
-            await depositBox.depositToBox(0, erc20.address, 0, parseEther("50"), { value: parseEther("1") });
-            expect(await depositBox.boxInfo(0)).to.deep.equal([[parseEther("50")], ["0"], [erc20.address]]);
+            const lockPeriod = 1000;
+            let lock = (await time.latest()) + lockPeriod + 1;
+
+            // deposit erc20
+            await depositBox.createDepositBox(erc20.address, parseEther("50"), 0, lockPeriod);
+            expect(await depositBox.depositBoxes(0)).to.deep.equal([
+                owner.address,
+                erc20.address,
+                parseEther("50"),
+                lock,
+                0
+            ]);
 
             // mint nft
             await erc721.safeMint(owner.address);
             await erc721.approve(depositBox.address, 0);
 
             // deposit nft
-            await depositBox.depositToBox(0, erc721.address, 1, "0");
-            expect(await depositBox.boxInfo(0)).to.deep.equal([
-                [parseEther("50"), "0"],
-                ["0", "1"],
-                [erc20.address, erc721.address]
+            lock = (await time.latest()) + lockPeriod + 1;
+            await depositBox.createDepositBox(erc721.address, 0, 1, lockPeriod);
+            expect(await depositBox.depositBoxes(1)).to.deep.equal([owner.address, erc721.address, 0, lock, 1]);
+
+            // deposit native
+            lock = (await time.latest()) + lockPeriod + 1;
+            await depositBox.createDepositBox(AddressZero, parseEther("1"), 2, lockPeriod, { value: parseEther("1") });
+            expect(await depositBox.depositBoxes(2)).to.deep.equal([
+                owner.address,
+                AddressZero,
+                parseEther("1"),
+                lock,
+                2
             ]);
         });
 
         it("Sigh and withdraw", async () => {
-            await depositBox.createDepositBox();
             await erc20.mint(owner.address, parseEther("100"));
             await erc20.approve(depositBox.address, parseEther("100"));
 
-            await depositBox.depositToBox(0, erc20.address, 0, parseEther("50"), { value: parseEther("1") });
+            await depositBox.createDepositBox(erc20.address, parseEther("50"), 0, 100);
 
             const sighDeadline = (await time.latest()) + 1000;
 
@@ -94,38 +107,31 @@ describe("DepositBox", function () {
     });
 
     describe("Revert", function () {
-        it("When user tries to deposit to wrong box", async () => {
-            await depositBox.connect(user1).createDepositBox();
-
-            await expect(
-                depositBox.depositToBox(0, AddressZero, 2, parseEther("1"), { value: parseEther("1") })
-            ).to.be.revertedWithCustomError(depositBox, "NotBoxOwner");
-        });
-
         it("When asset address == zero", async () => {
-            await depositBox.createDepositBox();
-
             // deposit erc20
-            await expect(depositBox.depositToBox(0, AddressZero, 0, parseEther("1"))).to.be.revertedWithCustomError(
+            await expect(depositBox.createDepositBox(AddressZero, 0, 0, 0)).to.be.revertedWithCustomError(
                 depositBox,
                 "ZeroAddress"
             );
 
             // deposit erc721
-            await expect(depositBox.depositToBox(0, AddressZero, 1, 0)).to.be.revertedWithCustomError(
+            await expect(depositBox.createDepositBox(AddressZero, 0, 1, 0)).to.be.revertedWithCustomError(
                 depositBox,
                 "ZeroAddress"
             );
         });
 
         it("When token amount == 0", async () => {
-            await depositBox.createDepositBox();
-
-            // deposit erc20
-            await expect(depositBox.depositToBox(0, erc20.address, 0, 0)).to.be.revertedWithCustomError(
+            await expect(depositBox.createDepositBox(erc20.address, 0, 0, 0)).to.be.revertedWithCustomError(
                 depositBox,
                 "ZeroAmount"
             );
+        });
+
+        it("When amount != msg.value", async () => {
+            await expect(
+                depositBox.createDepositBox(AddressZero, 0, 2, 0, { value: 100 })
+            ).to.be.revertedWithCustomError(depositBox, "WrongValue");
         });
 
         it("When sigh is expired", async () => {
@@ -146,7 +152,7 @@ describe("DepositBox", function () {
 
         it("When signed is not box owner", async () => {
             const sighDeadline = (await time.latest()) + 10000;
-            await depositBox.createDepositBox();
+            await depositBox.createDepositBox(AddressZero, parseEther("1"), 2, 0, { value: parseEther("1") });
 
             let message = ethers.utils.solidityPack(
                 ["address", "uint256", "uint256"],
@@ -158,6 +164,23 @@ describe("DepositBox", function () {
             await expect(depositBox.withdrawFromBox(0, sighDeadline, signedMessage)).to.be.revertedWithCustomError(
                 depositBox,
                 "SignerNotOwner"
+            );
+        });
+
+        it("When lock period is not ended", async () => {
+            const sighDeadline = (await time.latest()) + 10000;
+            await depositBox.createDepositBox(AddressZero, parseEther("1"), 2, 100, { value: parseEther("1") });
+
+            let message = ethers.utils.solidityPack(
+                ["address", "uint256", "uint256"],
+                [user1.address, "0", sighDeadline]
+            );
+            const hash = ethers.utils.solidityKeccak256(["bytes"], [message]);
+            const signedMessage = await owner.signMessage(hash);
+
+            await expect(depositBox.withdrawFromBox(0, sighDeadline, signedMessage)).to.be.revertedWithCustomError(
+                depositBox,
+                "LockPeriod"
             );
         });
     });
