@@ -168,7 +168,7 @@ describe("DepositBox", function () {
             // create message
             const message = ethers.utils.solidityPack(
                 ["address", "uint256", "uint256"],
-                [owner.address, "0", signDeadline]
+                [user1.address, "0", signDeadline]
             );
 
             // hash message
@@ -287,6 +287,18 @@ describe("DepositBox", function () {
                 depositBox,
                 "BoxClosed"
             );
+        });
+
+        it("When try to send native token with another asset", async () => {
+            // erc20
+            await expect(
+                depositBox.createDepositBox(erc20.address, parseEther("1"), 0, 100, { value: parseEther("1") })
+            ).to.be.revertedWithCustomError(depositBox, "EthSending");
+
+            // erc721
+            await expect(
+                depositBox.createDepositBox(erc721.address, 0, 1, 100, { value: parseEther("1") })
+            ).to.be.revertedWithCustomError(depositBox, "EthSending");
         });
     });
 });

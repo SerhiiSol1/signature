@@ -13,10 +13,10 @@ error ZeroAmount();
 error ZeroAddress();
 error SignerNotOwner();
 error SignExpired();
-error WrongAssetType();
 error WrongValue();
 error LockPeriod();
 error BoxClosed();
+error EthSending();
 
 contract DepositBox is Ownable {
     using SafeERC20 for IERC20;
@@ -40,7 +40,7 @@ contract DepositBox is Ownable {
     }
 
     mapping(uint256 => Box) public depositBoxes;
-    mapping(address => mapping(uint256 => bool)) public closedBoxes;
+    mapping(uint256 => bool) public closedBoxes;
 
     event BoxCreated(
         address owner,
@@ -62,10 +62,12 @@ contract DepositBox is Ownable {
         _boxIdCounter.increment();
 
         if (_assetType == AssetType.ERC20) {
+            if (msg.value != 0) revert EthSending();
             if (_asset == address(0)) revert ZeroAddress();
             if (_amountOrId == 0) revert ZeroAmount();
             IERC20(_asset).safeTransferFrom(msg.sender, address(this), _amountOrId);
         } else if (_assetType == AssetType.ERC721) {
+            if (msg.value != 0) revert EthSending();
             if (_asset == address(0)) revert ZeroAddress();
             IERC721(_asset).transferFrom(msg.sender, address(this), _amountOrId);
         } else {
@@ -83,13 +85,13 @@ contract DepositBox is Ownable {
         bytes memory signature
     ) public {
         if (deadline < block.timestamp) revert SignExpired();
+        if (closedBoxes[_boxId] == true) revert BoxClosed();
 
         Box storage box = depositBoxes[_boxId];
 
-        if (closedBoxes[box.owner][_boxId] == true) revert BoxClosed();
         if (box.lockPeriod > block.timestamp) revert LockPeriod();
 
-        bytes32 message = keccak256(abi.encodePacked(box.owner, _boxId, deadline));
+        bytes32 message = keccak256(abi.encodePacked(msg.sender, _boxId, deadline));
 
         bytes32 _hash = hashMessage(message);
 
@@ -103,7 +105,7 @@ contract DepositBox is Ownable {
             payable(msg.sender).transfer(box.amountOrId);
         }
 
-        closedBoxes[box.owner][_boxId] = true;
+        closedBoxes[_boxId] = true;
 
         emit WithdrawFromBox(_boxId, msg.sender);
     }
